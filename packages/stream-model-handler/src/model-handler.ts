@@ -135,13 +135,13 @@ export class ModelHandler implements StreamHandler<Model> {
     }
 
     const metadata = { controllers: [controller], model: modelStreamId }
-    const state = {
+    const state: StreamState = {
       type: Model.STREAM_TYPE_ID,
       content: payload.data,
       metadata,
       signature: SignatureStatus.SIGNED,
       anchorStatus: AnchorStatus.NOT_REQUESTED,
-      log: [{ cid: commitData.cid, type: CommitType.GENESIS }],
+      log: [StreamUtils.commitDataToLogEntry(commitData, CommitType.GENESIS)],
     }
 
     await this._schemaValidator.validateSchema(state.content.schema)

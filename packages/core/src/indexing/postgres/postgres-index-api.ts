@@ -1,5 +1,11 @@
 import { StreamID } from '@ceramicnetwork/streamid'
-import type { BaseQuery, Pagination, Page, DiagnosticsLogger } from '@ceramicnetwork/common'
+import type {
+  BaseQuery,
+  Pagination,
+  Page,
+  DiagnosticsLogger,
+  Networks,
+} from '@ceramicnetwork/common'
 import type { DatabaseIndexApi, IndexModelArgs, IndexStreamArgs } from '../database-index-api.js'
 import { initConfigTables, initMidTables, verifyTables } from './init-tables.js'
 import { InsertionOrder } from './insertion-order.js'
@@ -18,7 +24,8 @@ export class PostgresIndexApi implements DatabaseIndexApi {
   constructor(
     private readonly dbConnection: Knex,
     private readonly allowQueriesBeforeHistoricalSync: boolean,
-    private readonly logger: DiagnosticsLogger
+    private readonly logger: DiagnosticsLogger,
+    private readonly network: Networks
   ) {
     this.insertionOrder = new InsertionOrder(dbConnection)
   }
@@ -54,8 +61,8 @@ export class PostgresIndexApi implements DatabaseIndexApi {
       tip: indexingArgs.tip.toString(),
       last_anchored_at: indexingArgs.lastAnchor,
       first_anchored_at: indexingArgs.firstAnchor,
-      created_at: indexingArgs.createdAt || this.dbConnection.fn.now(),
-      updated_at: indexingArgs.updatedAt || this.dbConnection.fn.now(),
+      created_at: indexingArgs.createdAt || new Date(), // we don't use this.dbConnection.fn.now(), because postgres datetime may have higher precision than js date; TODO: CDB-2006: set postgres created_at and updated_at precision to 3
+      updated_at: indexingArgs.updatedAt || new Date(), // we don't use this.dbConnection.fn.now(), because postgres datetime may have higher precision than js date; TODO: CDB-2006: set postgres created_at and updated_at precision to 3
     }
     for (const field of this.modelsIndexedFields.get(indexingArgs.model.toString()) ?? []) {
       indexedData[field] = indexingArgs.streamContent[field]
@@ -66,7 +73,7 @@ export class PostgresIndexApi implements DatabaseIndexApi {
       .onConflict('stream_id')
       .merge({
         last_anchored_at: indexingArgs.lastAnchor,
-        updated_at: indexingArgs.updatedAt || this.dbConnection.fn.now(),
+        updated_at: indexingArgs.updatedAt || new Date(), // we don't use this.dbConnection.fn.now(), because postgres datetime may have higher precision than js date; TODO: CDB-2006: set postgres created_at and updated_at precision to 3
       })
   }
 
@@ -87,7 +94,7 @@ export class PostgresIndexApi implements DatabaseIndexApi {
       )
       .onConflict('model')
       .merge({
-        updated_at: this.dbConnection.fn.now(),
+        updated_at: new Date(), // we don't use this.dbConnection.fn.now(), because postgres datetime may have higher precision than js date; TODO: CDB-2006: set postgres created_at and updated_at precision to 3
         is_indexed: true,
         updated_by: '<FIXME: PUT ADMIN DID WHEN AUTH IS IMPLEMENTED>',
       })
@@ -108,7 +115,7 @@ export class PostgresIndexApi implements DatabaseIndexApi {
       )
       .onConflict('model')
       .merge({
-        updated_at: this.dbConnection.fn.now(),
+        updated_at: new Date(), // we don't use this.dbConnection.fn.now(), because postgres datetime may have higher precision than js date; TODO: CDB-2006: set postgres created_at and updated_at precision to 3
         is_indexed: false,
         updated_by: '<FIXME: PUT ADMIN DID WHEN AUTH IS IMPLEMENTED>',
       })
@@ -182,7 +189,7 @@ export class PostgresIndexApi implements DatabaseIndexApi {
   }
 
   async init(): Promise<void> {
-    await initConfigTables(this.dbConnection, this.logger)
+    await initConfigTables(this.dbConnection, this.logger, this.network)
     this.modelsToIndex = await this.getIndexedModelsFromDatabase()
   }
 

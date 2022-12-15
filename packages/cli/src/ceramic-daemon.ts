@@ -2,9 +2,8 @@ import * as fs from 'fs'
 import express, { Request, Response } from 'express'
 import { Ceramic, CeramicConfig } from '@ceramicnetwork/core'
 import { RotatingFileStream } from '@ceramicnetwork/logger'
-import { Metrics, METRIC_NAMES } from '@ceramicnetwork/metrics'
+import { ServiceMetrics as Metrics } from '@ceramicnetwork/observability'
 import { buildIpfsConnection } from './build-ipfs-connection.util.js'
-import { S3StateStore } from './s3-state-store.js'
 import {
   DiagnosticsLogger,
   LoggerProvider,
@@ -37,6 +36,7 @@ import crypto from 'crypto'
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const packageJson = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 import lru from 'lru_map'
+import { S3Store } from './s3-store.js'
 
 const DEFAULT_HOSTNAME = '0.0.0.0'
 const DEFAULT_PORT = 7007
@@ -45,6 +45,9 @@ const CALLER_NAME = 'js-ceramic'
 
 const ADMIN_CODE_EXPIRATION_TIMEOUT = 1000 * 60 * 1 // 1 min
 const ADMIN_CODE_CACHE_CAPACITY = 50
+
+const STREAM_PINNED = 'stream_pinned'
+const STREAM_UNPINNED = 'stream_unpinned'
 
 type AdminCode = string
 type Timestamp = number
@@ -70,8 +73,8 @@ export function makeCeramicConfig(opts: DaemonConfig): CeramicConfig {
   })
 
   // If desired, enable metrics
-  if (opts.metrics?.metricsExporterEnabled) {
-    Metrics.start(opts.metrics, CALLER_NAME)
+  if (opts.metrics?.metricsExporterEnabled && opts.metrics?.collectorHost) {
+    Metrics.start(opts.metrics.collectorHost, CALLER_NAME)
   }
 
   const ceramicConfig: CeramicConfig = {
@@ -289,15 +292,11 @@ export class CeramicDaemon {
       `Connecting to IPFS node available as ${ipfsId.addresses.map(String).join(', ')}`
     )
 
-    if (opts.stateStore?.mode == StateStoreMode.S3) {
-      const s3StateStore = new S3StateStore(
-        opts.stateStore?.s3Bucket,
-        modules.loggerProvider.getDiagnosticsLogger()
-      )
-      modules.pinStoreFactory.setStateStore(s3StateStore)
-    }
-
     const ceramic = new Ceramic(modules, params)
+    if (opts.stateStore?.mode == StateStoreMode.S3) {
+      const s3Store = new S3Store(opts.stateStore?.s3Bucket, params.networkOptions.name)
+      await ceramic.repository.injectStateStore(s3Store)
+    }
     const did = new DID({ resolver: makeResolvers(ceramic, ceramicConfig, opts) })
     ceramic.did = did
     await ceramic._init(true)
@@ -819,7 +818,7 @@ export class CeramicDaemon {
     const streamId = StreamID.fromString(req.params.streamid || req.params.docid)
     const { force } = req.body
     await this.ceramic.pin.add(streamId, force)
-    Metrics.count(METRIC_NAMES.STREAM_PINNED, 1)
+    Metrics.count(STREAM_PINNED, 1)
     res.json({
       streamId: streamId.toString(),
       docId: streamId.toString(),
@@ -834,7 +833,7 @@ export class CeramicDaemon {
     const streamId = StreamID.fromString(req.params.streamid || req.params.docid)
     const { opts } = req.body
     await this.ceramic.pin.rm(streamId, opts)
-    Metrics.count(METRIC_NAMES.STREAM_UNPINNED, 1)
+    Metrics.count(STREAM_UNPINNED, 1)
     res.json({
       streamId: streamId.toString(),
       docId: streamId.toString(),

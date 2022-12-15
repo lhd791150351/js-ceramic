@@ -1,23 +1,15 @@
 import type { DatabaseIndexApi } from './database-index-api.js'
-import type { StreamID } from '@ceramicnetwork/streamid'
 import { SqliteIndexApi } from './sqlite/sqlite-index-api.js'
 import { PostgresIndexApi } from './postgres/postgres-index-api.js'
 import knex from 'knex'
-import { DiagnosticsLogger } from '@ceramicnetwork/common'
+import { DiagnosticsLogger, Networks } from '@ceramicnetwork/common'
+import * as fs from 'fs'
 
 export type IndexingConfig = {
   /**
    * Database connection string.
    */
   db: string
-
-  /**
-   * @deprecated
-   *
-   * List of models to index.
-   */
-  // TODO: Remove this key when Admin API is implemented
-  models?: Array<StreamID>
 
   /**
    *
@@ -51,7 +43,8 @@ function parseURL(input: string) {
  */
 export function buildIndexing(
   indexingConfig: IndexingConfig,
-  logger: DiagnosticsLogger
+  logger: DiagnosticsLogger,
+  network: Networks
 ): DatabaseIndexApi {
   const connectionString = parseURL(indexingConfig.db)
   const protocol = connectionString.protocol.replace(/:$/, '')
@@ -59,6 +52,12 @@ export function buildIndexing(
     case 'sqlite':
     case 'sqlite3': {
       logger.imp('Initializing SQLite connection')
+      if (fs) {
+        // create dir if it doesn't exist
+        // not strictly necessary here, but keeping it for backwards compatibility, as this directory
+        // was created on startup before CDB-2008
+        fs.mkdirSync(connectionString.pathname.substring(0, connectionString.pathname.lastIndexOf('/')), { recursive: true })
+      }
       const dbConnection = knex({
         client: 'sqlite3',
         useNullAsDefault: true,
@@ -69,7 +68,8 @@ export function buildIndexing(
       return new SqliteIndexApi(
         dbConnection,
         indexingConfig.allowQueriesBeforeHistoricalSync,
-        logger
+        logger,
+        network
       )
     }
     case 'postgres': {
@@ -81,7 +81,8 @@ export function buildIndexing(
       return new PostgresIndexApi(
         dataSource,
         indexingConfig.allowQueriesBeforeHistoricalSync,
-        logger
+        logger,
+        network
       )
     }
     default:
